@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Quantum Nexus // System Online</title>
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap');
+
+    body { 
+        margin: 0; 
+        overflow: hidden; 
+        background: #000; 
+        font-family: 'Orbitron', monospace;
+        cursor: crosshair;
+    }
+
+    #loading-screen { 
+        position: fixed; 
+        width: 100%; 
+        height: 100%; 
+        display: flex; 
+        flex-direction: column;
+        align-items: center; 
+        justify-content: center;
+        background: radial-gradient(circle at center, #0a0a1a 0%, #000 100%);
+        color: #00ffff;
+        z-index: 10;
+        transition: opacity 1.5s ease-out;
+    }
+
+    #loading-title {
+        font-size: 2.5rem;
+        font-weight: 900;
+        letter-spacing: 0.3rem;
+        text-shadow: 0 0 15px #00ffff, 0 0 30px #00ffff;
+        animation: pulse 1.5s infinite;
+    }
+
+    #loading-subtitle {
+        font-size: 1rem;
+        font-weight: 400;
+        margin-top: 1rem;
+        opacity: 0.7;
+        letter-spacing: 0.1rem;
+    }
+
+    @keyframes pulse {
+        0%, 100% { opacity: 1; }
+        50% { opacity: 0.6; }
+    }
+
+    canvas { 
+        display: block; 
+        background: #000;
+        transform: translateZ(0);
+        will-change: transform;
+    }
+
+    #ui-overlay {
+        position: fixed;
+        top: 20px;
+        left: 20px;
+        color: #00ffff;
+        font-size: 0.9rem;
+        font-weight: 700;
+        letter-spacing: 0.1rem;
+        text-shadow: 0 0 5px #00ffff;
+        opacity: 0;
+        transition: opacity 2s ease-in;
+        z-index: 5;
+    }
+
+    #ui-overlay.visible {
+        opacity: 0.8;
+    }
+
+    #ui-overlay .label {
+        opacity: 0.6;
+        font-size: 0.8rem;
+    }
+
+    #ui-overlay .value {
+        font-size: 1.2rem;
+        position: relative;
+    }
+
+    #ui-overlay .value::after {
+        content: '';
+        position: absolute;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: linear-gradient(rgba(0, 255, 255, 0.1) 50%, transparent 50%);
+        background-size: 100% 4px;
+        animation: scanline 8s linear infinite;
+        pointer-events: none;
+    }
+
+    @keyframes scanline {
+        0% { background-position: 0 0; }
+        100% { background-position: 0 10px; }
+    }
+</style>
+</head>
+<body>
+
+<div id="loading-screen">
+    <div id="loading-title">QUANTUM NEXUS</div>
+    <div id="loading-subtitle">INITIALIZING SYSTEM...</div>
+</div>
+
+<div id="ui-overlay">
+    <div class="label">SYSTEM STATUS</div>
+    <div class="value" id="status-value">ONLINE</div>
+    <div class="label" style="margin-top: 1rem;">INTEGRITY</div>
+    <div class="value" id="integrity-value">100.0%</div>
+</div>
+
+<canvas id="helixCanvas"></canvas>
+
+<script>
+document.addEventListener('DOMContentLoaded', () => {
+    const CONFIG = {
+        VISUAL: {
+            HELIX_RADIUS: 200,
+            HELIX_SPACING: 12,
+            NODE_COUNT: 60,
+            ROTATION_SPEED: 0.0003,
+            BACKGROUND_PARTICLE_COUNT: 100,
+            STRAND_COLOR_1: '#00ffff',
+            STRAND_COLOR_2: '#ff00ff',
+            CONNECTION_COLOR: 'rgba(0, 255, 255, 0.12)',
+            MOUSE_INTERACTION_RADIUS: 200,
+            MAX_DEPTH_SCALE: 0.8,
+            Z_DEPTH: 0.6,
+        },
+        INTERACTION: {
+            DRONE_SPEED: 0.0008,
+            DRONE_SPAWN_INTERVAL: 3000,
+            MAX_DRONES: 4,
+            TRAIL_EMISSION_RATE: 0.06,
+            PULSE_SPEED: 0.008,
+        }
+    };
+
+    const canvas = document.getElementById('helixCanvas');
+    const ctx = canvas.getContext('2d');
+    const loadingScreen = document.getElementById('loading-screen');
+    const uiOverlay = document.getElementById('ui-overlay');
+    const statusValue = document.getElementById('status-value');
+    const integrityValue = document.getElementById('integrity-value');
+
+    let width, height, center;
+    function resizeCanvas() {
+        width = canvas.width = window.innerWidth;
+        height = canvas.height = window.innerHeight;
+        center = { x: width / 2, y: height / 2 };
+    }
+    resizeCanvas();
+    window.addEventListener('resize', resizeCanvas);
+
+    let mouse = { x: center.x, y: center.y, isDown: false };
+    window.addEventListener('mousemove', e => { mouse.x = e.clientX; mouse.y = e.clientY; });
+    window.addEventListener('mousedown', () => mouse.isDown = true);
+    window.addEventListener('mouseup', () => mouse.isDown = false);
+
+    let angleOffset = 0;
+    let lastTime = 0;
+    let systemIntegrity = 100.0;
+    const drones = [];
+    const particles = [];
+    const pulses = [];
+    let nextDroneSpawnTime = 0;
+
+    for (let i = 0; i < CONFIG.VISUAL.BACKGROUND_PARTICLE_COUNT; i++) {
+        particles.push({ 
+            x: Math.random() * window.innerWidth, 
+            y: Math.random() * window.innerHeight, 
+            tw: Math.random() * Math.PI * 2 
+        });
+    }
+
+    function hexToRgb(hex) {
+        hex = hex.replace('#', '');
+        const bigint = parseInt(hex, 16);
+        const r = (bigint >> 16) & 255;
+        const g = (bigint >> 8) & 255;
+        const b = bigint & 255;
+        return `${r}, ${g}, ${b}`;
+    }
+
+    function getHelixNodes() {
+        const nodes = [];
+        for (let i = 0; i < CONFIG.VISUAL.NODE_COUNT; i++) {
+            const y = center.y + (i - CONFIG.VISUAL.NODE_COUNT / 2) * CONFIG.VISUAL.HELIX_SPACING;
+            const angle = i * 0.3 + angleOffset;
+
+            const cos1 = Math.cos(angle), sin1 = Math.sin(angle);
+            let x1 = center.x + cos1 * CONFIG.VISUAL.HELIX_RADIUS;
+            let z1 = sin1 * CONFIG.VISUAL.HELIX_RADIUS * CONFIG.VISUAL.Z_DEPTH;
+            const scale1 = 1 - (z1 / (CONFIG.VISUAL.HELIX_RADIUS * CONFIG.VISUAL.Z_DEPTH)) * CONFIG.VISUAL.MAX_DEPTH_SCALE;
+
+            const cos2 = -cos1, sin2 = -sin1;
+            let x2 = center.x + cos2 * CONFIG.VISUAL.HELIX_RADIUS;
+            let z2 = sin2 * CONFIG.VISUAL.HELIX_RADIUS * CONFIG.VISUAL.Z_DEPTH;
+            const scale2 = 1 - (z2 / (CONFIG.VISUAL.HELIX_RADIUS * CONFIG.VISUAL.Z_DEPTH)) * CONFIG.VISUAL.MAX_DEPTH_SCALE;
+
+            nodes.push({ name: `Q-Node-${i + 1}`, x: x1, y, z: z1, scale: scale1, color: CONFIG.VISUAL.STRAND_COLOR_1 });
+            nodes.push({ name: `Q-Node-${i + 1}`, x: x2, y, z: z2, scale: scale2, color: CONFIG.VISUAL.STRAND_COLOR_2 });
+        }
+        nodes.sort((a, b) => a.z - b.z);
+        return nodes;
+    }
+
+    function draw(time, dt, helixNodes) {
+        ctx.clearRect(0, 0, width, height);
+
+        for (let p of particles) {
+            const opacity = 0.1 + Math.sin(time / 500 + p.tw) * 0.1;
+            ctx.fillStyle = `rgba(255,255,255,${opacity})`;
+            ctx.fillRect(p.x, p.y, 1, 1);
+        }
+
+        ctx.lineWidth = 1;
+        for (let i = 0; i < CONFIG.VISUAL.NODE_COUNT; i++) {
+            const y = center.y + (i - CONFIG.VISUAL.NODE_COUNT / 2) * CONFIG.VISUAL.HELIX_SPACING;
+            const angle = i * 0.3 + angleOffset;
+            const x1 = center.x + Math.cos(angle) * CONFIG.VISUAL.HELIX_RADIUS;
+            const x2 = center.x + Math.cos(angle + Math.PI) * CONFIG.VISUAL.HELIX_RADIUS;
+            const opacity = 0.1 + Math.abs(Math.sin(angle)) * 0.2;
+            ctx.strokeStyle = CONFIG.VISUAL.CONNECTION_COLOR.replace('0.12', opacity.toFixed(2));
+            ctx.beginPath();
+            ctx.moveTo(x1, y);
+            ctx.lineTo(x2, y);
+            ctx.stroke();
+        }
+
+        ctx.save();
+        for (const node of helixNodes) {
+            const dist = Math.hypot(mouse.x - node.x, mouse.y - node.y);
+            const glow = Math.max(0, 1 - (dist / CONFIG.VISUAL.MOUSE_INTERACTION_RADIUS));
+
+            ctx.font = `${10 * node.scale}px Orbitron`;
+            ctx.textAlign = 'center';
+            ctx.fillStyle = node.color;
+            ctx.shadowColor = node.color;
+            ctx.shadowBlur = 5 + glow * 15;
+            ctx.globalAlpha = 0.7 + glow * 0.3;
+            ctx.fillText(node.name, node.x, node.y);
+        }
+        ctx.restore();
+    }
+
+    function loop(time) {
+        const dt = time - lastTime;
+        lastTime = time;
+        angleOffset += dt * CONFIG.VISUAL.ROTATION_SPEED;
+
+        const helixNodes = getHelixNodes();
+        draw(time, dt, helixNodes);
+        requestAnimationFrame(loop);
+    }
+
+    setTimeout(() => {
+        loadingScreen.style.opacity = 0;
+        setTimeout(() => {
+            loadingScreen.style.display = 'none';
+            uiOverlay.classList.add('visible');
+            requestAnimationFrame(loop);
+        }, 1500);
+    }, 2000);
+});
+</script>
+</body>
+</html>
